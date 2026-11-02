@@ -1,4 +1,7 @@
+import {localEndpoint} from './connection.js';
 const $=id=>document.getElementById(id);
+const onBridge=!!document.querySelector('meta[name="apex-bridge"]');
+let bridgeInfo=null;
 const read=(store,key,fallback)=>{try{return JSON.parse(store.getItem(key))??fallback;}catch{return fallback;}};
 const save=(store,key,value)=>{try{store.setItem(key,JSON.stringify(value));}catch{}};
 const settings=read(localStorage,'apex.settings',{endpoint:'',units:'kmh',rate:100,wake:false,game:'dirt'});
@@ -54,6 +57,7 @@ function render(){
  text('shift-hint',rpmRatio>.92?'CAMBIA ↑':truck?'TRANSMISIÓN':'SECUENCIAL');
  for(const field of ['throttle','brake','clutch']){text(field,Number.isFinite(s?.[field])?`${fmt(s[field]*100)}%`:'—');setWidth(`${field}-bar`,(s?.[field]||0)*100);}
  text('vehicle-name',s?.vehicle||(truck?'PERFIL ETS2':'PERFIL DiRT 2.0'));
+ for(const [field,unit] of [['fuel','L'],['water','°C'],['oil','°C'],['air','PSI']])text(`truck-${field}`,Number.isFinite(s?.[field])?`${fmt(s[field])} ${unit}`:'—');
  text('quick-a',truck?(Number.isFinite(s?.fuel)?`${fmt(s.fuel)} L`:'—'):duration(s?.elapsed));
  text('quick-b',truck?distance(s?.remaining):distance(s?.distance));
  setWidth('quick-progress',truck?(s?.fuelCapacity>0?s.fuel/s.fuelCapacity*100:0):(s?.totalDistance>0?s.distance/s.totalDistance*100:0));
@@ -68,6 +72,10 @@ function render(){
 }
 function profile(){
  const truck=game==='ets2';$('game').value=game;
+ document.body.classList.toggle('truck',truck);$('truck-vitals').hidden=!truck;
+ $('page-title').replaceChildren(document.createTextNode(truck?'Truck cockpit':'Rally cockpit'),Object.assign(document.createElement('span'),{textContent:'.'}));
+ text('dashboard-subtitle',truck?'LARGA DISTANCIA / EURO TRUCK':'RALLY / DiRT 2.0');
+ document.querySelectorAll('[data-game]').forEach(e=>e.setAttribute('aria-pressed',String(e.dataset.game===game)));
  text('cockpit-label',truck?'INSTRUMENTOS / TRUCK':'INSTRUMENTOS / RALLY');text('session-tab',truck?'Viaje':'Etapa');
  text('session-label',`${truck?'TRUCK':'RALLY'} / ${mode==='demo'?'DEMOSTRACIÓN':'TELEMETRÍA'}`);
  text('quick-label',truck?'EN ESTE VIAJE':'EN ESTA ETAPA');text('quick-a-label',truck?'COMBUSTIBLE':'TIEMPO');text('quick-b-label',truck?'RESTANTE':'RECORRIDO');
@@ -86,7 +94,7 @@ async function connect(){
    controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),3000);const started=performance.now();
    try{
     const url=new URL('api/telemetry',settings.endpoint.endsWith('/')?settings.endpoint:`${settings.endpoint}/`);url.searchParams.set('game',game);
-    const response=await fetch(url,{headers:{Authorization:`Bearer ${read(sessionStorage,'apex.token','')}`},cache:'no-store',signal:controller.signal});
+    const response=await fetch(url,{headers:{Authorization:`Bearer ${read(sessionStorage,'apex.token','')}`,'X-Apex-Client':'dashboard'},cache:'no-store',signal:controller.signal});
     if(!response.ok)throw Error(response.status===401?'Token incorrecto. Abre ajustes y copia el token del puente.':response.status===403?'Origen no autorizado. Revisa APEX_ORIGINS en el PC.':`El puente respondió ${response.status}.`);
     const payload=await response.json();if(payload.version!==1||!Number.isFinite(payload.serverTime)||!Object.hasOwn(payload,'sample'))throw Error('Respuesta incompatible con APEX. Revisa la dirección.');
     if(payload.sample && (payload.sample.game!==game||!Number.isFinite(payload.sample.receivedAt)))throw Error('Paquete de telemetría incompatible.');
@@ -101,26 +109,52 @@ async function connect(){
 }
 function openSettings(){
  focusBeforeDialog=document.activeElement;
- $('endpoint').value=settings.endpoint||(/^https?:/.test(location.protocol)&&location.port==='8787'?location.origin:'');$('token').value=read(sessionStorage,'apex.token','');$('units').value=settings.units||'kmh';$('rate').value=String(settings.rate||100);$('wake').checked=!!settings.wake;text('config-error','');$('config').showModal();
+ $('endpoint').value=settings.endpoint||(onBridge?location.origin:'');$('token').value=read(sessionStorage,'apex.token','');$('units').value=settings.units||'kmh';$('rate').value=String(settings.rate||100);$('wake').checked=!!settings.wake;
+ $('pc-ip').value=settings.pcIp||(onBridge&&location.hostname!=='127.0.0.1'?location.hostname:'');$('pc-port').value=settings.pcPort||location.port||'8787';
+ $('connection-mode').value=onBridge&&!bridgeInfo?.lanAccess?'https':settings.connectionMode||'lan';connectionFields();text('config-error','');$('config').showModal();
 }
+function connectionFields(){const lan=$('connection-mode').value==='lan';$('lan-fields').hidden=!lan;$('https-fields').hidden=lan;text('config-error','');}
 async function requestWake(){
  if(!settings.wake){await wakeLock?.release();wakeLock=null;return;}
  try{if('wakeLock' in navigator&&!document.hidden)wakeLock=await navigator.wakeLock.request('screen');else toast('Safari no ofrece bloqueo de pantalla aquí. Revisa Bloqueo automático en iOS.');}catch{toast('No se pudo mantener la pantalla encendida.');}
 }
 document.querySelectorAll('.tab').forEach(button=>button.addEventListener('click',()=>{view=button.dataset.view;document.querySelectorAll('.view').forEach(e=>e.hidden=e.id!==view);document.querySelectorAll('.tab').forEach(e=>{e.classList.toggle('active',e===button);if(e===button)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});render();}));
-for(const id of ['settings','demo-toggle'])$(id).addEventListener('click',openSettings);
+for(const id of ['settings','demo-toggle','connect-ip'])$(id).addEventListener('click',openSettings);
+$('connection-mode').addEventListener('change',connectionFields);
 let focusBeforeDialog=null;$('config').addEventListener('close',()=>focusBeforeDialog?.focus());
 $('close-config').addEventListener('click',()=>$('config').close());
 $('config-form').addEventListener('submit',event=>{
  event.preventDefault();let url;
+ if($('connection-mode').value==='lan'){
+  try{
+   const endpoint=localEndpoint($('pc-ip').value,$('pc-port').value);
+   Object.assign(settings,{pcIp:$('pc-ip').value.trim(),pcPort:$('pc-port').value,connectionMode:'lan',units:$('units').value,rate:Number($('rate').value),wake:$('wake').checked,game});save(localStorage,'apex.settings',settings);
+   if(!onBridge||location.origin!==endpoint){const target=new URL(endpoint);target.searchParams.set('game',game);target.searchParams.set('units',settings.units);target.searchParams.set('rate',String(settings.rate));location.assign(target.href);return;}
+   if(!bridgeInfo?.lanAccess)throw Error('En el PC inicia APEX con «Iniciar APEX.cmd» o «npm run lan». Para el modo protegido usa la conexión avanzada con token.');
+   settings.endpoint=location.origin;save(localStorage,'apex.settings',settings);$('config').close();requestWake();connect();return;
+  }catch(error){text('config-error',error.message);return;}
+ }
  try{url=new URL($('endpoint').value.trim());if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Error('Usa solo dirección y puerto, sin ruta, contraseña ni parámetros.');if(location.protocol==='https:'&&url.protocol==='http:')throw Error('GitHub Pages necesita un puente HTTPS. Usa un túnel HTTPS o abre la página local del puente.');if($('token').value.trim().length<16)throw Error('Copia el token completo del puente (mínimo 16 caracteres).');}
  catch(error){text('config-error',error.message==='Invalid URL'?'Escribe una dirección completa, por ejemplo https://tu-puente.example.com.':error.message);return;}
- Object.assign(settings,{endpoint:url.origin,units:$('units').value,rate:Number($('rate').value),wake:$('wake').checked,game});save(localStorage,'apex.settings',settings);save(sessionStorage,'apex.token',$('token').value.trim());$('config').close();requestWake();connect();
+ Object.assign(settings,{connectionMode:'https',endpoint:url.origin,units:$('units').value,rate:Number($('rate').value),wake:$('wake').checked,game});save(localStorage,'apex.settings',settings);save(sessionStorage,'apex.token',$('token').value.trim());$('config').close();requestWake();connect();
 });
 $('start-demo').addEventListener('click',()=>{stop();mode='demo';demoStart=performance.now();$('config').close();profile();});
-$('game').addEventListener('change',()=>{game=$('game').value;settings.game=game;save(localStorage,'apex.settings',settings);sample=null;demoStart=performance.now();if(mode==='live')connect();else profile();});
+function changeGame(value){game=value;settings.game=game;save(localStorage,'apex.settings',settings);sample=null;demoStart=performance.now();if(mode==='live')connect();else profile();}
+$('game').addEventListener('change',()=>changeGame($('game').value));
+document.querySelectorAll('[data-game]').forEach(e=>e.addEventListener('click',()=>changeGame(e.dataset.game)));
 $('screen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else toast('En Safari usa Compartir → Añadir a pantalla de inicio.');}catch{toast('Usa Compartir → Añadir a pantalla de inicio en Safari.');}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){sample=null;lastSuccess=0;if(mode==='demo')sample=demo();if(settings.wake)requestWake();render();}});
 profile();setInterval(render,100);
 // Reconnect only when a token exists in this tab; otherwise start with a clearly marked demo.
-if(settings.endpoint&&read(sessionStorage,'apex.token',''))connect();
+if(onBridge){
+ const params=new URLSearchParams(location.search);
+ if(['dirt','ets2'].includes(params.get('game')))game=params.get('game');
+ if(['kmh','mph'].includes(params.get('units')))settings.units=params.get('units');
+ if(['100','200','500'].includes(params.get('rate')))settings.rate=Number(params.get('rate'));
+ settings.endpoint=location.origin;profile();
+ fetch('/api/info',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error();return r.json();}).then(info=>{
+  bridgeInfo=info;
+  if(Array.isArray(info.addresses)&&info.addresses.length){text('pc-addresses',`IP DEL PC: ${info.addresses.join(' / ')} · PUERTO: ${info.port}`);$('pc-addresses').hidden=false;}
+  if(info.lanAccess||read(sessionStorage,'apex.token',''))connect();else openSettings();
+ }).catch(()=>toast('No se pudo reconocer el puente del PC. Revisa la conexión.'));
+}else if(settings.endpoint&&settings.connectionMode!=='lan'&&read(sessionStorage,'apex.token',''))connect();

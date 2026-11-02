@@ -4,6 +4,18 @@ Tu copiloto digital para **DiRT Rally 2.0** y **Euro Truck Simulator 2 en PC Win
 
 **Web:** https://albertoc17.github.io/apex-telemetry/
 
+## Conectar escribiendo la misma IP (modo Wi-Fi)
+
+1. En el PC, con Node.js 22 o superior instalado, descarga y extrae este proyecto. Abre **`Iniciar APEX.cmd`** (o ejecuta `npm run lan`).
+2. La ventana muestra **IP DEL PC**, por ejemplo `192.168.1.20`, y **PUERTO**, normalmente `8787`. Si aparecen varias IP por VPN o Ethernet, elige la de la red a la que está conectado el móvil.
+3. Conecta el iPad o iPhone a la misma red del PC. Abre APEX en GitHub Pages, pulsa **Conectar por IP**, escribe esa IP y puerto, y conecta.
+4. Safari abre el dashboard servido por el PC y conecta automáticamente. También puedes abrir directamente `http://IP-DEL-PC:8787`.
+5. Elige la tarjeta **DiRT Rally 2.0** o **Euro Truck Simulator 2**. Cada juego tiene su propio cockpit y las vistas Vehículo y Etapa/Viaje.
+
+El modo Wi-Fi es opcional y permite lectura de telemetría **sin token a dispositivos de tu red privada**. Está pensado para una red de confianza. Verifica host privado, origen, cliente y dirección de conexión; no se habilita en hosts públicos de túneles. `npm start` conserva el modo protegido con token. No abras puertos del router. El firewall de Windows debe permitir Node en tu red privada.
+
+GitHub Pages actúa como entrada: al conectar por IP se navega al panel local. Esto evita consultar HTTP desde una página HTTPS. Para recibir telemetría sin salir del dominio Pages, usa la opción avanzada con HTTPS y token descrita abajo. La IP identifica al PC; no configura el Wi-Fi del móvil. DiRT todavía necesita su salida UDP y ETS2 el plugin/servidor Funbit; los pasos de preparación están abajo.
+
 ## Qué hace cada parte
 
 ```text
@@ -106,10 +118,11 @@ $env:APEX_ORIGINS = 'https://albertoc17.github.io'
 | `DIRT_PORT` | `20777` | Recepción UDP en loopback |
 | `ETS_URL` | `http://127.0.0.1:25555/api/ets2/telemetry` | API Funbit, restringida al PC local |
 | `APEX_TOKEN` | Aleatorio por sesión | Token propio de 16 caracteres o más |
+| `APEX_LAN` | Sin definir | `1` habilita el modo Wi-Fi sin token, equivalente a `--lan` |
 | `APEX_ORIGINS` | `https://albertoc17.github.io` | Orígenes web permitidos, separados por comas, sin ruta ni barra final |
 | `TLS_CERT`, `TLS_KEY` | Sin definir | Rutas a certificado y clave PEM para HTTPS |
 
-La API solo lee telemetría, requiere Bearer token, desactiva caché y restringe CORS. No habilita control remoto ni escritura de configuración del juego. La interfaz se sirve sin autenticación; el acceso a datos exige token. Si creas tu propio fork, cambia `APEX_ORIGINS` al origen de tu Pages y los enlaces del README y de la ayuda.
+La API solo lee telemetría, desactiva caché y restringe CORS. El modo protegido requiere Bearer token; el modo Wi-Fi permite acceso local sin token bajo las condiciones anteriores. No habilita control remoto ni escritura de configuración del juego. La interfaz y la información básica de conexión se sirven sin autenticación. Si creas tu propio fork, cambia `APEX_ORIGINS` al origen de tu Pages y los enlaces del README y de la ayuda.
 
 ## Desarrollo, pruebas y publicación
 

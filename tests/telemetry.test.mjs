@@ -2,7 +2,35 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {parseDirt,parseEts} from '../bridge/adapters.mjs';
-import {createHandler} from '../bridge/server.mjs';
+import {createHandler,privateAddress} from '../bridge/server.mjs';
+import {localEndpoint} from '../web/connection.js';
+
+test('Wi-Fi IP entry validates addresses, ports and rejects injected URLs',()=>{
+ assert.equal(localEndpoint('192.168.1.20','8787'),'http://192.168.1.20:8787');
+ assert.equal(localEndpoint('10.0.0.2','9000'),'http://10.0.0.2:9000');
+ for(const ip of ['8.8.8.8','192.168.1.999','192.168.1.2/evil','example.com','192.168.1.2@evil.com'])assert.throws(()=>localEndpoint(ip));
+ for(const port of ['0','65536','8787/foo','abc'])assert.throws(()=>localEndpoint('192.168.1.2',port));
+ assert.equal(privateAddress('::ffff:192.168.1.20'),true);
+ assert.equal(privateAddress('172.31.0.1'),true);assert.equal(privateAddress('172.32.0.1'),false);
+});
+
+test('Opt-in Wi-Fi connects without token only on private host, same-origin client and private peer',async()=>{
+ const server=http.createServer(createHandler({token:'test-token-123456789',lan:true,addresses:['192.168.1.20'],getSample:g=>({game:g,receivedAt:Date.now()})}));
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const base=`http://127.0.0.1:${server.address().port}`;
+ try{
+  const endpoint=`${base}/api/telemetry?game=ets2`;
+  assert.equal((await fetch(endpoint)).status,401);
+  const headers={'X-Apex-Client':'dashboard'};
+  const r=await fetch(endpoint,{headers});assert.equal(r.status,200);assert.equal((await r.json()).sample.game,'ets2');
+  assert.equal((await fetch(endpoint,{headers:{...headers,'Sec-Fetch-Site':'cross-site'}})).status,401);
+  const publicHostStatus=await new Promise((resolve,reject)=>{http.get(endpoint,{headers:{...headers,Host:'public-tunnel.example'}},res=>{res.resume();resolve(res.statusCode);}).on('error',reject);});
+  assert.equal(publicHostStatus,401);
+  assert.equal((await fetch(endpoint,{headers:{...headers,Origin:'https://foreign.example'}})).status,403);
+  const info=await (await fetch(`${base}/api/info`)).json();assert.equal(info.lanAccess,true);assert.deepEqual(info.addresses,['192.168.1.20']);
+  assert.match(await (await fetch(base)).text(),/meta name="apex-bridge"/);
+ }finally{await new Promise(resolve=>server.close(resolve));}
+});
 
 test('DiRT packet converts units and preserves FL/FR/RL/RR channel order',()=>{
  const b=Buffer.alloc(264);const f=(i,v)=>b.writeFloatLE(v,i*4);

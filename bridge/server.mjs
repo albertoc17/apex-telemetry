@@ -7,7 +7,14 @@ import {fileURLToPath} from 'node:url';
 import {networkInterfaces} from 'node:os';
 import {parseDirt,parseEts} from './adapters.mjs';
 
-export function createHandler({token,origins=[],getSample}) {
+export function privateAddress(address=''){
+  const ip=address.replace(/^::ffff:/,'');
+  if(ip==='::1')return true;
+  const p=ip.split('.');if(p.length!==4||p.some(v=>!/^\d{1,3}$/.test(v)||Number(v)>255))return false;
+  const [a,b]=p.map(Number);
+  return a===10||a===127||(a===192&&b===168)||(a===172&&b>=16&&b<=31)||(a===169&&b===254);
+}
+export function createHandler({token,origins=[],getSample,lan=false,addresses=[]}) {
   return async (req,res) => {
     const origin=req.headers.origin;
     let sameOrigin=false;
@@ -18,16 +25,24 @@ export function createHandler({token,origins=[],getSample}) {
     if(origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');}
     if(req.method==='OPTIONS'){
       res.setHeader('Access-Control-Allow-Methods','GET, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers','Authorization');
+      res.setHeader('Access-Control-Allow-Headers','Authorization, X-Apex-Client');
       res.setHeader('Access-Control-Allow-Private-Network','true');
       res.writeHead(204);res.end();return;
     }
     const url=new URL(req.url,'http://bridge.local');
     if(req.method!=='GET'){res.writeHead(405);res.end();return;}
+    // LAN opt-in accepts only private literal hosts and private peers, never public tunnel hosts.
+    let host='';try{host=new URL(`http://${req.headers.host}`).hostname;}catch{res.writeHead(400);res.end('Host no válido');return;}
+    const lanAccess=lan && privateAddress(host) && privateAddress(req.socket.remoteAddress) && (!origin||sameOrigin) && !['cross-site','same-site'].includes(req.headers['sec-fetch-site']);
+    if(url.pathname==='/api/info'){
+      res.setHeader('Content-Type','application/json');
+      res.end(JSON.stringify({lanAccess,addresses,port:req.socket.localPort}));return;
+    }
     if(url.pathname==='/api/telemetry'){
       const provided=Buffer.from(req.headers.authorization ?? '');
       const expected=Buffer.from(`Bearer ${token}`);
-      if(provided.length!==expected.length || !timingSafeEqual(provided,expected)){res.writeHead(401);res.end('Token incorrecto');return;}
+      const authenticated=provided.length===expected.length && timingSafeEqual(provided,expected);
+      if(!authenticated && !(lanAccess && req.headers['x-apex-client']==='dashboard')){res.writeHead(401);res.end('Token incorrecto');return;}
       const game=url.searchParams.get('game');
       if(!['dirt','ets2'].includes(game)){res.writeHead(400);res.end('Juego no válido');return;}
       res.setHeader('Content-Type','application/json');
@@ -35,11 +50,12 @@ export function createHandler({token,origins=[],getSample}) {
       res.end(JSON.stringify({version:1,serverTime:Date.now(),sample}));return;
     }
     // Explicit asset allowlist: no arbitrary filesystem paths.
-    const assets={'/':'index.html','/index.html':'index.html','/style.css':'style.css','/app.js':'app.js','/icon.svg':'icon.svg','/manifest.webmanifest':'manifest.webmanifest'};
+    const assets={'/':'index.html','/index.html':'index.html','/style.css':'style.css','/app.js':'app.js','/connection.js':'connection.js','/icon.svg':'icon.svg','/manifest.webmanifest':'manifest.webmanifest'};
     const asset=assets[url.pathname];
     if(!asset){res.writeHead(404);res.end();return;}
     try{
-      const content=await readFile(new URL(`../web/${asset}`,import.meta.url));
+      let content=await readFile(new URL(`../web/${asset}`,import.meta.url));
+      if(asset==='index.html')content=content.toString().replace('<!--APEX_BRIDGE-->','<meta name="apex-bridge" content="1">');
       const types={html:'text/html; charset=utf-8',css:'text/css',js:'text/javascript',svg:'image/svg+xml',webmanifest:'application/manifest+json'};
       res.setHeader('Content-Type',types[asset.split('.').pop()]);res.end(content);
     }catch {res.writeHead(500);res.end('No se pudo leer el archivo');}
@@ -63,12 +79,15 @@ export async function startBridge(env=process.env) {
     if(!stopped)etsTimer=setTimeout(pollEts,100);
   }
   let etsTimer;pollEts();
-  const handler=createHandler({token,origins,getSample:g=>g==='dirt'?dirt:ets});
+  const addresses=Object.values(networkInterfaces()).flat().filter(n=>n?.family==='IPv4'&&!n.internal&&privateAddress(n.address)).map(n=>n.address);
+  const lan=env.APEX_LAN==='1'||process.argv.includes('--lan');
+  const handler=createHandler({token,origins,getSample:g=>g==='dirt'?dirt:ets,lan,addresses});
   const tls=env.TLS_CERT && env.TLS_KEY;
   const server=tls?https.createServer({cert:await readFile(env.TLS_CERT),key:await readFile(env.TLS_KEY)},handler):http.createServer(handler);
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,env.APEX_HOST || '0.0.0.0',resolve);});
   console.log(`\nAPEX TELEMETRY · puente listo\nToken de sesión: ${token}\nUDP DiRT: 127.0.0.1:${udpPort}\nETS2: ${upstream}\n`);
-  for(const list of Object.values(networkInterfaces()))for(const n of list || [])if(n.family==='IPv4'&&!n.internal)console.log(`iPad / iPhone en tu Wi-Fi: ${tls?'https':'http'}://${n.address}:${port}`);
+  for(const address of addresses)console.log(`IP DEL PC: ${address}\nPUERTO: ${port}\nABRE EN EL IPAD: ${tls?'https':'http'}://${address}:${port}\n`);
+  console.log(lan?'MODO WI-FI: los dispositivos de tu red privada pueden leer telemetría al abrir la IP del PC.':'Modo protegido: introduce el token. Para conectar solo por IP usa npm run lan.');
   console.log(`PC: ${tls?'https':'http'}://localhost:${port}\nDesde GitHub Pages usa HTTPS con certificado confiable o túnel HTTPS. Consulta README.md.\n`);
   const close=()=>{stopped=true;clearTimeout(etsTimer);udp.close();server.close();};
   process.once('SIGINT',close);process.once('SIGTERM',close);
