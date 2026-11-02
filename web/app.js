@@ -3,7 +3,7 @@ const read=(store,key,fallback)=>{try{return JSON.parse(store.getItem(key))??fal
 const save=(store,key,value)=>{try{store.setItem(key,JSON.stringify(value));}catch{}};
 const settings=read(localStorage,'apex.settings',{endpoint:'',units:'kmh',rate:100,wake:false,game:'dirt'});
 let game=['dirt','ets2'].includes(settings.game)?settings.game:'dirt',mode='demo',sample=null,generation=0,controller=null,wakeLock=null,view='drive',lastSuccess=0,lastServerAge=0,demoStart=performance.now(),latency=null;
-let message='',history=[],lastSampleStamp=0;
+let message='';
 const fmt=(v,d=0)=>Number.isFinite(v)?v.toLocaleString('es-CL',{maximumFractionDigits:d,minimumFractionDigits:d}):'—';
 const duration=v=>Number.isFinite(v)?`${String(Math.floor(v/60)).padStart(2,'0')}:${(v%60).toFixed(1).padStart(4,'0')}`:'—';
 const unit=()=>settings.units==='mph'?'MI':'KM';
@@ -14,7 +14,7 @@ const lights=Array.from({length:18},(_,i)=>{const e=document.createElement('i');
 function toast(value){text('toast',value);$('toast').hidden=false;setTimeout(()=>$('toast').hidden=true,3500);}
 function demo(){
  const t=(performance.now()-demoStart)/1000,truck=game==='ets2',cycle=(t%180)/180;
- return {game,connected:true,paused:false,receivedAt:Date.now(),speed:truck?79+Math.sin(t/8)*7:100+Math.sin(t/5)*42,rpm:truck?1450+Math.sin(t/3)*230:5000+Math.sin(t/2)*2200,maxRpm:truck?2500:8000,gear:truck?'12':String(3+Math.floor((Math.sin(t/5)+1)*1.4)),throttle:.55+Math.sin(t*1.2)*.4,brake:Math.max(0,Math.sin(t/3)-.5),clutch:Math.max(0,Math.sin(t*2)-.97)*20,elapsed:t%180,distance:cycle*8200,totalDistance:8200,gLat:Math.sin(t)*.8,gLong:Math.cos(t/2)*.5,vehicle:truck?'Volvo FH · Demo':null,brakes:[140+Math.sin(t)*25,145,130,137],water:truck?86:null,oil:truck?93:null,air:truck?121:null,battery:truck?27.6:null,fuel:truck?482:null,fuelCapacity:truck?800:null,consumption:truck?.31:null,damage:truck?.024:null,odometer:truck?42856:null,remaining:truck?186000-cycle*5000:null,speedLimit:truck?90:null,route:truck?'Hamburg → Berlin':null,cargo:truck?'Materiales de construcción':null,income:truck?8450:null,warnings:[],lastTime:null};
+ return {game,connected:true,paused:false,receivedAt:Date.now(),speed:truck?79+Math.sin(t/8)*7:100+Math.sin(t/5)*42,rpm:truck?1450+Math.sin(t/3)*230:5000+Math.sin(t/2)*2200,maxRpm:truck?2500:8000,gear:truck?'12':String(3+Math.floor((Math.sin(t/5)+1)*1.4)),throttle:.55+Math.sin(t*1.2)*.4,brake:Math.max(0,Math.sin(t/3)-.5),clutch:Math.max(0,Math.sin(t*2)-.97)*20,elapsed:t%180,distance:cycle*8200,totalDistance:8200,gLat:Math.sin(t)*.8,gLong:Math.cos(t/2)*.5,vehicle:truck?'Volvo FH · Demo':null,brakes:truck?[140,140,140,140]:[140+Math.sin(t)*25,145,130,137],water:truck?86:null,oil:truck?93:null,air:truck?121:null,battery:truck?27.6:null,fuel:truck?482:null,fuelCapacity:truck?800:null,consumption:truck?.31:null,damage:truck?.024:null,odometer:truck?42856:null,remaining:truck?186000-cycle*5000:null,speedLimit:truck?90:null,route:truck?'Hamburg → Berlin':null,cargo:truck?'Materiales de construcción':null,income:truck?8450:null,warnings:[],lastTime:null};
 }
 function isFresh(){return mode==='demo'||(sample?.connected && lastServerAge+(performance.now()-lastSuccess)<2500);}
 function metric(label,value,note){const el=document.createElement('article');el.className='panel metric';for(const [tag,content] of [['span',label],['strong',value],['small',note]]){const node=document.createElement(tag);node.textContent=content??'—';el.append(node);}return el;}
@@ -64,7 +64,7 @@ function render(){
  const note=mode==='demo'?'Demostración · valores ficticios. Conecta tu PC para ver datos reales.':message||(!fresh?'Puente sin datos recientes. Comprueba que el juego esté abierto y la telemetría habilitada.':s?.warnings?.join(' · ')||'');
  text('connection-note',note);$('connection-note').hidden=!note;
  if(view!=='drive')renderDetails(s);
- if(s && lastSampleStamp!==s.receivedAt){history.push(s.speed);if(history.length>100)history.shift();lastSampleStamp=s.receivedAt;}
+
 }
 function profile(){
  const truck=game==='ets2';$('game').value=game;
@@ -100,6 +100,7 @@ async function connect(){
  poll();
 }
 function openSettings(){
+ focusBeforeDialog=document.activeElement;
  $('endpoint').value=settings.endpoint||(/^https?:/.test(location.protocol)&&location.port==='8787'?location.origin:'');$('token').value=read(sessionStorage,'apex.token','');$('units').value=settings.units||'kmh';$('rate').value=String(settings.rate||100);$('wake').checked=!!settings.wake;text('config-error','');$('config').showModal();
 }
 async function requestWake(){
@@ -117,7 +118,7 @@ $('config-form').addEventListener('submit',event=>{
  Object.assign(settings,{endpoint:url.origin,units:$('units').value,rate:Number($('rate').value),wake:$('wake').checked,game});save(localStorage,'apex.settings',settings);save(sessionStorage,'apex.token',$('token').value.trim());$('config').close();requestWake();connect();
 });
 $('start-demo').addEventListener('click',()=>{stop();mode='demo';demoStart=performance.now();$('config').close();profile();});
-$('game').addEventListener('change',()=>{game=$('game').value;settings.game=game;save(localStorage,'apex.settings',settings);sample=null;history=[];demoStart=performance.now();if(mode==='live')connect();else profile();});
+$('game').addEventListener('change',()=>{game=$('game').value;settings.game=game;save(localStorage,'apex.settings',settings);sample=null;demoStart=performance.now();if(mode==='live')connect();else profile();});
 $('screen').addEventListener('click',async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else toast('En Safari usa Compartir → Añadir a pantalla de inicio.');}catch{toast('Usa Compartir → Añadir a pantalla de inicio en Safari.');}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){sample=null;lastSuccess=0;if(mode==='demo')sample=demo();if(settings.wake)requestWake();render();}});
 profile();setInterval(render,100);

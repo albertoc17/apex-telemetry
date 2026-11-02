@@ -31,7 +31,7 @@ export function parseEts(data, now = Date.now()) {
     brakes:[t.brakeTemperature,t.brakeTemperature,t.brakeTemperature,t.brakeTemperature].map(number),
     remaining:number(n.estimatedDistance), speedLimit:number(n.speedLimit),
     route:[j.sourceCity,j.destinationCity].filter(Boolean).join(' → ') || null,
-    cargo:typeof j.cargo === 'string' ? j.cargo : null, income:number(j.income),
+    cargo:data.trailer?.attached && typeof data.trailer.name === 'string' ? data.trailer.name : null, income:number(j.income),
     gLat:null,gLong:null,elapsed:null,distance:null,totalDistance:null,
     warnings:[t.fuelWarningOn && 'COMBUSTIBLE BAJO',t.waterTemperatureWarningOn && 'TEMPERATURA ALTA',t.airPressureWarningOn && 'PRESIÓN DE AIRE BAJA',t.parkBrakeOn && 'FRENO DE ESTACIONAMIENTO'].filter(Boolean)};
 }

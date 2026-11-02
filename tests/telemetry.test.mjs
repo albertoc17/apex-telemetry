@@ -17,9 +17,10 @@ test('DiRT rejects truncated, foreign and non-finite packets',()=>{
  const b=Buffer.alloc(264);b.writeFloatLE(800,252);b.writeFloatLE(NaN,148);assert.equal(parseDirt(b),null);
 });
 test('Funbit units stay km/h, unavailable values stay null, gear and flags translate',()=>{
- const s=parseEts({game:{connected:true,paused:true},truck:{speed:82,engineRpm:1400,displayedGear:-1,gameThrottle:.7,wearEngine:.1,waterTemperature:90},navigation:{estimatedDistance:120000,speedLimit:90},job:{sourceCity:'Paris',destinationCity:'Lyon'}});
+ const s=parseEts({game:{connected:true,paused:true},truck:{speed:82,engineRpm:1400,displayedGear:-1,gameThrottle:.7,wearEngine:.1,waterTemperature:90},navigation:{estimatedDistance:120000,speedLimit:90},job:{sourceCity:'Paris',destinationCity:'Lyon'},trailer:{attached:true,name:'Gravel'}});
  assert.equal(s.speed,82);assert.equal(s.remaining,120000);assert.equal(s.rpm,1400);assert.equal(s.fuel,null);assert.equal(s.gear,'R');assert.equal(s.route,'Paris → Lyon');assert.equal(s.paused,true);assert.equal(s.damage,.1);
  assert.throws(()=>parseEts({truck:{}}));
+ assert.equal(s.cargo,'Gravel');
  assert.equal(parseEts({game:{connected:false}}).connected,false);
 });
 test('HTTP requires token, restricts origins, serves assets and serializes freshness metadata',async()=>{
@@ -36,6 +37,7 @@ test('HTTP requires token, restricts origins, serves assets and serializes fresh
   assert.equal((await fetch(`${base}/api/telemetry?game=other`,{headers})).status,400);
   assert.equal((await fetch(`${base}/.env`)).status,404);
   const page=await fetch(base);assert.equal(page.status,200);assert.match(await page.text(),/APEX/);
+  assert.equal((await fetch(`${base}/app.js`,{headers:{Origin:base}})).status,200);
   const preflight=await fetch(`${base}/api/telemetry`,{method:'OPTIONS',headers:{Origin:headers.Origin}});assert.equal(preflight.status,204);assert.match(preflight.headers.get('access-control-allow-headers'),/Authorization/);
  }finally{await new Promise(resolve=>server.close(resolve));}
 });
